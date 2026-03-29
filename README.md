@@ -46,6 +46,23 @@ python train_sft.py \
   --dry_run
 ```
 
+Run the built-in cloud smoke workflow:
+
+```bash
+python train_sft.py \
+  --test_mode \
+  --output_dir /tmp/sft-test \
+  --use_lora \
+  --dry_run
+```
+
+In `test_mode`, the script will:
+
+- use a tiny default test model if no model is provided
+- download a tiny Hugging Face test dataset automatically
+- write temporary train/val JSONL files under `output_dir/test_mode_data/`
+- continue through the normal validation or training flow
+
 ## Dataset Format
 
 The current training pipeline expects JSONL data in `messages` format:

@@ -21,8 +21,8 @@ def non_negative_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train an SFT model.")
     parser.add_argument("--experiment_name", default=None, help="Optional experiment name for tracking.")
-    parser.add_argument("--model_name_or_path", required=True, help="HF model name or local path.")
-    parser.add_argument("--train_path", required=True, type=Path, help="Training dataset path.")
+    parser.add_argument("--model_name_or_path", default=None, help="HF model name or local path.")
+    parser.add_argument("--train_path", type=Path, default=None, help="Training dataset path.")
     parser.add_argument("--val_path", type=Path, default=None, help="Optional validation dataset path.")
     parser.add_argument("--output_dir", required=True, type=Path, help="Output directory.")
     parser.add_argument("--dataset_format", default="messages", choices=["messages"], help="Dataset format.")
@@ -46,4 +46,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trust_remote_code", action="store_true")
     parser.add_argument("--report_to", default="none", help="Trainer reporting backend.")
     parser.add_argument("--dry_run", action="store_true", help="Validate config and datasets without training.")
+    parser.add_argument("--test_mode", action="store_true", help="Download a tiny HF dataset and run a built-in smoke workflow.")
+    parser.add_argument("--test_model_name_or_path", default="trl-internal-testing/tiny-GPT2LMHeadModel")
+    parser.add_argument("--test_dataset", default="Butanium/femto-ultrachat")
+    parser.add_argument("--test_dataset_split", default="train")
+    parser.add_argument("--test_train_samples", type=positive_int, default=8)
+    parser.add_argument("--test_val_samples", type=positive_int, default=2)
     return parser

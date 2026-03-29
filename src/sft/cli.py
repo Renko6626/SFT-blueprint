@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 from src.sft.args import build_parser
-from src.sft.data import load_datasets
+from src.sft.data import load_datasets, prepare_test_mode_data
 from src.sft.eval import evaluate_if_available
 from src.sft.formatting import format_messages
 from src.sft.model import build_peft_config, load_model_and_tokenizer
@@ -42,6 +42,10 @@ def _merge_args(cli_args: Any, config: dict[str, Any]) -> Any:
 def _validate_args(args: Any) -> None:
     if args.bf16 and args.fp16:
         raise ValueError("Choose at most one mixed precision mode: bf16 or fp16.")
+    if args.model_name_or_path is None:
+        raise ValueError("model_name_or_path is required unless test_mode provides a default model.")
+    if args.train_path is None:
+        raise ValueError("train_path is required unless test_mode prepares test data automatically.")
     if args.val_path is None and args.eval_steps != build_parser().get_default("eval_steps"):
         LOGGER.warning("Ignoring eval_steps=%s because no validation dataset was provided.", args.eval_steps)
     if args.use_lora and not 0 <= args.lora_dropout < 1:
@@ -54,11 +58,33 @@ def _validate_args(args: Any) -> None:
         raise FileNotFoundError(f"Validation dataset does not exist: {args.val_path}")
 
 
+def _resolve_test_mode_args(args: Any) -> Any:
+    if not args.test_mode:
+        return args
+
+    resolved = vars(args).copy()
+    if resolved["model_name_or_path"] is None:
+        resolved["model_name_or_path"] = resolved["test_model_name_or_path"]
+    if resolved["train_path"] is None:
+        train_path, val_path = prepare_test_mode_data(
+            output_dir=resolved["output_dir"],
+            dataset_name=resolved["test_dataset"],
+            split=resolved["test_dataset_split"],
+            train_samples=resolved["test_train_samples"],
+            val_samples=resolved["test_val_samples"],
+        )
+        resolved["train_path"] = train_path
+        if resolved["val_path"] is None:
+            resolved["val_path"] = val_path
+    return SimpleNamespace(**resolved)
+
+
 def _save_run_metadata(args: Any, train_records: list[dict[str, Any]], val_records: list[dict[str, Any]] | None) -> None:
     resolved_config = to_serializable(vars(args))
     dump_json(args.output_dir / "resolved_config.json", resolved_config)
     summary = {
         "experiment_name": args.experiment_name,
+        "test_mode": args.test_mode,
         "train_samples": len(train_records),
         "eval_samples": len(val_records) if val_records else 0,
         "dataset_format": args.dataset_format,
@@ -80,9 +106,9 @@ def main() -> int:
     parser = build_parser()
     cli_args = parser.parse_args()
     args = _merge_args(cli_args, _load_config(cli_args.config))
-    _validate_args(args)
-
     ensure_dir(args.output_dir)
+    args = _resolve_test_mode_args(args)
+    _validate_args(args)
     set_seed(args.seed)
     LOGGER.info("Loading datasets from %s", args.train_path)
     train_records, val_records = load_datasets(args.train_path, args.val_path)

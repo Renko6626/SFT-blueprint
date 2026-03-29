@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from src.sft.args import build_parser
 from src.sft.data import load_messages_jsonl
-from src.sft.cli import _merge_args, _save_run_metadata, _validate_args
+from src.sft.cli import _merge_args, _resolve_test_mode_args, _save_run_metadata, _validate_args
 from src.sft.formatting import format_messages
 
 
@@ -11,14 +12,14 @@ def test_parser_accepts_required_args() -> None:
     parser = build_parser()
     args = parser.parse_args(
         [
+            "--output_dir",
+            "outputs/test",
             "--experiment_name",
             "demo-run",
             "--model_name_or_path",
             "/models/Qwen2.5-7B-Instruct",
             "--train_path",
             "tests/fixtures/train_messages.jsonl",
-            "--output_dir",
-            "outputs/test",
         ]
     )
     assert args.experiment_name == "demo-run"
@@ -84,6 +85,24 @@ def test_validate_args_rejects_bf16_and_fp16() -> None:
         raise AssertionError("Expected invalid precision combination to raise ValueError")
 
 
+def test_validate_args_requires_train_path_without_test_mode() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--model_name_or_path",
+            "/models/Qwen2.5-7B-Instruct",
+            "--output_dir",
+            "outputs/test",
+        ]
+    )
+    try:
+        _validate_args(args)
+    except ValueError as exc:
+        assert "train_path is required" in str(exc)
+    else:
+        raise AssertionError("Expected missing train_path to raise ValueError")
+
+
 def test_save_run_metadata_writes_config_and_summary(tmp_path: Path) -> None:
     parser = build_parser()
     args = parser.parse_args(
@@ -123,3 +142,47 @@ def test_format_messages_falls_back_without_chat_template() -> None:
     )
     assert "user: hello" in text
     assert "assistant: world" in text
+
+
+def test_resolve_test_mode_args_uses_default_test_model_and_paths(tmp_path: Path, monkeypatch) -> None:
+    class FakeDataset:
+        def __init__(self, rows: list[dict[str, object]]) -> None:
+            self.rows = rows
+
+        def __len__(self) -> int:
+            return len(self.rows)
+
+        def select(self, indices: range) -> list[dict[str, object]]:
+            return [self.rows[index] for index in indices]
+
+    fake_rows = [
+        {"messages": [{"role": "user", "content": f"q{i}"}, {"role": "assistant", "content": f"a{i}"}]}
+        for i in range(10)
+    ]
+
+    def fake_load_dataset(dataset_name: str, split: str) -> FakeDataset:
+        assert dataset_name == "Butanium/femto-ultrachat"
+        assert split == "train"
+        return FakeDataset(fake_rows)
+
+    import datasets
+
+    monkeypatch.setattr(datasets, "load_dataset", fake_load_dataset)
+
+    args = SimpleNamespace(
+        experiment_name="test-mode",
+        model_name_or_path=None,
+        train_path=None,
+        val_path=None,
+        output_dir=tmp_path,
+        test_mode=True,
+        test_model_name_or_path="trl-internal-testing/tiny-GPT2LMHeadModel",
+        test_dataset="Butanium/femto-ultrachat",
+        test_dataset_split="train",
+        test_train_samples=8,
+        test_val_samples=2,
+    )
+    resolved = _resolve_test_mode_args(args)
+    assert resolved.model_name_or_path == "trl-internal-testing/tiny-GPT2LMHeadModel"
+    assert resolved.train_path.exists()
+    assert resolved.val_path.exists()
