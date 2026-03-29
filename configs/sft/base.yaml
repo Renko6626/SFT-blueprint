@@ -1,0 +1,16 @@
+dataset_format: messages
+max_seq_length: 4096
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 16
+learning_rate: 2e-5
+num_train_epochs: 3
+logging_steps: 10
+save_steps: 200
+eval_steps: 200
+use_lora: true
+lora_r: 8
+lora_alpha: 16
+lora_dropout: 0.05
+seed: 42
+report_to: none

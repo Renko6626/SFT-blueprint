@@ -1,0 +1,24 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Test cache
+.pytest_cache/
+
+# Training outputs and generated artifacts
+outputs/
+data/real_smoke/
+
+# Internal working notes and agent-facing docs
+AGENTS.md
+project.md
+how_to_write_blueprint.md
+changelog.md
+docs/real_test_plan.md
+
+# Local and experimental helper scripts
+scripts/prepare_real_smoke_data.py
+scripts/run_sft_local.sh
+scripts/run_sft_real_smoke.sh
+scripts/run_sft_qwen_small.sh
+scripts/smoke_test_sft.sh

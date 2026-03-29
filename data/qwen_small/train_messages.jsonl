@@ -1,0 +1,12 @@
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"请用一句话解释什么是监督微调。"},{"role":"assistant","content":"监督微调是用带标准答案的数据继续训练模型，让它学会按预期方式回答问题。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"把下面这句话改得更正式：这个方案挺不错的。"},{"role":"assistant","content":"这个方案整体较为完善，具有较好的可行性。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"请总结这段话的核心意思：我们先搭一个可运行版本，再逐步加功能，这样更容易定位问题。"},{"role":"assistant","content":"核心意思是先做可运行的最小版本，再逐步扩展，以降低排错和迭代成本。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"用户说“模型跑不起来”，你先问哪两个问题？"},{"role":"assistant","content":"我会先确认报错信息是什么，以及当前使用的模型、数据和启动命令分别是什么。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"给我一个 Python 列表推导式示例，把 [1,2,3,4] 里的偶数平方后返回。"},{"role":"assistant","content":"可以写成 `[x * x for x in [1, 2, 3, 4] if x % 2 == 0]`，结果是 `[4, 16]`。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"把这段英文翻成中文：Training logs are useful for debugging distributed jobs."},{"role":"assistant","content":"训练日志对于排查分布式任务问题非常有用。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"请给一个简短的 shell 命令，列出当前目录下的 md 文件。"},{"role":"assistant","content":"可以用 `find . -maxdepth 1 -name '*.md' | sort`。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"什么情况下应该优先做 dry run？"},{"role":"assistant","content":"在第一次接入新数据、新模型或新训练命令时，应优先做 dry run，先验证配置和输入是否正确。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"请解释一下 LoRA 的价值，控制在两句话以内。"},{"role":"assistant","content":"LoRA 通过只训练少量低秩参数来降低显存和训练成本。它很适合在有限资源下快速微调大模型。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"如果一个脚本要被平台调用，最重要的接口要求是什么？"},{"role":"assistant","content":"最重要的是提供稳定、清晰、可直接从命令行调用的接口，并保持参数命名长期兼容。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"请把“先验证输入，再开始训练”改成更适合写在技术文档里的表达。"},{"role":"assistant","content":"建议在启动训练前先完成输入数据与配置参数的有效性校验。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"给出一个简短建议：怎么让代码代理少犯大错？"},{"role":"assistant","content":"先读文档和现有代码，再做小步、可验证、可回滚的修改，不要擅自扩大范围。"}]}

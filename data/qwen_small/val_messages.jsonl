@@ -1,0 +1,3 @@
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"为什么训练入口应该保持薄封装？"},{"role":"assistant","content":"因为这样更容易维护、调试和复用，也能把训练细节限制在内部模块中。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"请把这句话改写得更简洁：这个参数只有在提供验证集的时候才会生效。"},{"role":"assistant","content":"只有提供验证集时，这个参数才会生效。"}]}
+{"messages":[{"role":"system","content":"你是一个简洁、可靠的中文助手。"},{"role":"user","content":"一句话解释什么是 smoke test。"},{"role":"assistant","content":"smoke test 是用于快速确认核心流程能否基本跑通的最小测试。"}]}

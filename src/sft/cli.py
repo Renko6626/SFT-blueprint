@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import yaml
+
+from src.sft.args import build_parser
+from src.sft.data import load_datasets
+from src.sft.eval import evaluate_if_available
+from src.sft.formatting import format_messages
+from src.sft.model import build_peft_config, load_model_and_tokenizer
+from src.sft.trainer import build_trainer
+from src.sft.utils import LOGGER, configure_logging, dump_json, ensure_dir, set_seed, to_serializable
+
+
+def _load_config(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {}
+    if not path.exists():
+        raise FileNotFoundError(f"Config file does not exist: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    if not isinstance(payload, dict):
+        raise ValueError("Config file must be a mapping.")
+    return payload
+
+
+def _merge_args(cli_args: Any, config: dict[str, Any]) -> Any:
+    parser = build_parser()
+    merged = vars(cli_args).copy()
+    for key, value in config.items():
+        if key not in merged:
+            raise ValueError(f"Unsupported config key: {key}")
+        default_value = parser.get_default(key)
+        if merged[key] == default_value and value is not None:
+            merged[key] = value
+    return SimpleNamespace(**merged)
+
+
+def _validate_args(args: Any) -> None:
+    if args.bf16 and args.fp16:
+        raise ValueError("Choose at most one mixed precision mode: bf16 or fp16.")
+    if args.val_path is None and args.eval_steps != build_parser().get_default("eval_steps"):
+        LOGGER.warning("Ignoring eval_steps=%s because no validation dataset was provided.", args.eval_steps)
+    if args.use_lora and not 0 <= args.lora_dropout < 1:
+        raise ValueError("LoRA dropout must be in the range [0, 1).")
+    if args.num_train_epochs <= 0:
+        raise ValueError("num_train_epochs must be greater than zero.")
+    if not args.train_path.exists():
+        raise FileNotFoundError(f"Training dataset does not exist: {args.train_path}")
+    if args.val_path is not None and not args.val_path.exists():
+        raise FileNotFoundError(f"Validation dataset does not exist: {args.val_path}")
+
+
+def _save_run_metadata(args: Any, train_records: list[dict[str, Any]], val_records: list[dict[str, Any]] | None) -> None:
+    resolved_config = to_serializable(vars(args))
+    dump_json(args.output_dir / "resolved_config.json", resolved_config)
+    summary = {
+        "experiment_name": args.experiment_name,
+        "train_samples": len(train_records),
+        "eval_samples": len(val_records) if val_records else 0,
+        "dataset_format": args.dataset_format,
+        "use_lora": args.use_lora,
+        "model_name_or_path": args.model_name_or_path,
+    }
+    dump_json(args.output_dir / "run_summary.json", summary)
+
+
+def _to_hf_dataset(records: list[dict[str, Any]], tokenizer: Any) -> Any:
+    from datasets import Dataset
+
+    rows = [{"text": format_messages(record, tokenizer)} for record in records]
+    return Dataset.from_list(rows)
+
+
+def main() -> int:
+    configure_logging()
+    parser = build_parser()
+    cli_args = parser.parse_args()
+    args = _merge_args(cli_args, _load_config(cli_args.config))
+    _validate_args(args)
+
+    ensure_dir(args.output_dir)
+    set_seed(args.seed)
+    LOGGER.info("Loading datasets from %s", args.train_path)
+    train_records, val_records = load_datasets(args.train_path, args.val_path)
+    _save_run_metadata(args, train_records, val_records)
+    if args.dry_run:
+        LOGGER.info("Dry run finished successfully. Configuration and datasets are valid.")
+        return 0
+
+    LOGGER.info("Loading model and tokenizer from %s", args.model_name_or_path)
+    model, tokenizer = load_model_and_tokenizer(args)
+    train_dataset = _to_hf_dataset(train_records, tokenizer)
+    eval_dataset = _to_hf_dataset(val_records, tokenizer) if val_records else None
+    peft_config = build_peft_config(args)
+    trainer = build_trainer(
+        args=args,
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        peft_config=peft_config,
+        formatting_func=None,
+    )
+
+    LOGGER.info("Starting training")
+    train_result = trainer.train()
+    train_metrics = {str(key): float(value) for key, value in train_result.metrics.items() if isinstance(value, (int, float))}
+    eval_metrics = evaluate_if_available(trainer, eval_dataset)
+
+    trainer.save_model(str(args.output_dir))
+    tokenizer.save_pretrained(str(args.output_dir))
+    dump_json(args.output_dir / "train_metrics.json", train_metrics)
+    dump_json(args.output_dir / "eval_metrics.json", eval_metrics)
+    LOGGER.info("Training complete. Outputs saved to %s", args.output_dir)
+    return 0
