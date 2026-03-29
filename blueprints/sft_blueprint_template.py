@@ -1,6 +1,8 @@
 REPO_NAME = "your-repo-name"
 NAMESPACE = "your-github-org"
-WORKDIR = "/workspace/your-repo"
+WORKDIR = "/magnus/workspace/repository"
+CONDA_SH = "/opt/miniconda3/etc/profile.d/conda.sh"
+CONDA_ENV = "magnus_shared"
 
 
 Runner = Annotated[str, {
@@ -148,6 +150,12 @@ ExtraArgs = Annotated[Optional[str], {
     "placeholder": "--save_steps 100 --eval_steps 100",
 }]
 
+TestMode = Annotated[bool, {
+    "label": "Test Mode",
+    "description": "Run the built-in HF smoke workflow instead of normal dataset-driven training.",
+    "scope": "Misc",
+}]
+
 
 def blueprint(
     runner: Runner,
@@ -165,6 +173,7 @@ def blueprint(
     gpu_count: GpuCount = 1,
     gpu_type: GpuType = "rtx5090",
     priority: Priority = "A2",
+    test_mode: TestMode = False,
     notes: Notes = None,
     extra_args: ExtraArgs = None,
 ):
@@ -174,12 +183,10 @@ def blueprint(
     output_dir = f"{output_root.rstrip('/')}/{experiment_name}"
 
     train_cmd = (
-        "accelerate launch"
+        "uv run accelerate launch"
         + f" --num_processes {gpu_count}"
         + " train_sft.py"
         + f" --experiment_name {shq(experiment_name)}"
-        + f" --model_name_or_path {shq(base_model)}"
-        + f" --train_path {shq(train_path)}"
         + f" --output_dir {shq(output_dir)}"
         + " --dataset_format messages"
         + f" --max_seq_length {max_seq_len}"
@@ -193,8 +200,14 @@ def blueprint(
         + " --eval_steps 200"
     )
 
-    if val_path is not None:
-        train_cmd += f" --val_path {shq(val_path)}"
+    if test_mode:
+        train_cmd += " --test_mode"
+        train_cmd += f" --test_model_name_or_path {shq(base_model)}"
+    else:
+        train_cmd += f" --model_name_or_path {shq(base_model)}"
+        train_cmd += f" --train_path {shq(train_path)}"
+        if val_path is not None:
+            train_cmd += f" --val_path {shq(val_path)}"
 
     if finetune_method == "lora":
         train_cmd += " --use_lora"
@@ -203,8 +216,10 @@ def blueprint(
         train_cmd += f" {extra_args}"
 
     entry_command = "\n".join([
+        f"source {shq(CONDA_SH)}",
+        f"conda activate {shq(CONDA_ENV)}",
         f"cd {shq(WORKDIR)}",
-        "python -m pip install -r requirements.txt",
+        "uv sync --quiet",
         train_cmd,
     ])
 
@@ -217,6 +232,7 @@ def blueprint(
 - Output Dir: {output_dir}
 - Base Model: {base_model}
 - Finetune Method: {finetune_method}
+- Test Mode: {test_mode}
 - Max Seq Len: {max_seq_len}
 - Epochs: {epochs}
 - Learning Rate: {learning_rate}

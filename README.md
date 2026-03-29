@@ -96,6 +96,44 @@ deployment values:
 - `REPO_NAME`
 - `NAMESPACE`
 - `WORKDIR`
+- `CONDA_SH`
+- `CONDA_ENV`
+
+## Recommended Magnus Entry Command
+
+The recommended Magnus runtime entry sequence for this repository is:
+
+```bash
+source /opt/miniconda3/etc/profile.d/conda.sh
+conda activate magnus_shared
+cd /magnus/workspace/repository
+uv sync --quiet
+uv run accelerate launch --num_processes 1 train_sft.py \
+  --test_mode \
+  --output_dir /tmp/sft-test \
+  --use_lora \
+  --dry_run
+```
+
+For a normal dataset-driven run, the recommended command shape is:
+
+```bash
+source /opt/miniconda3/etc/profile.d/conda.sh
+conda activate magnus_shared
+cd /magnus/workspace/repository
+uv sync --quiet
+uv run accelerate launch --num_processes 1 train_sft.py \
+  --experiment_name qwen25-05b-sft-v1 \
+  --model_name_or_path Qwen/Qwen2.5-0.5B-Instruct \
+  --train_path /data/project/train_messages.jsonl \
+  --val_path /data/project/val_messages.jsonl \
+  --output_dir /data/outputs/sft/qwen25-05b-sft-v1 \
+  --dataset_format messages \
+  --use_lora
+```
+
+This repository includes [pyproject.toml](pyproject.toml) so `uv sync --quiet`
+can resolve and install the required training dependencies in Magnus.
 
 ## Repository Layout
 

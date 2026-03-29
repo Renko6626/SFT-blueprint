@@ -81,7 +81,13 @@ def prepare_test_mode_data(
     train_samples: int,
     val_samples: int,
 ) -> tuple[Path, Path]:
-    from datasets import load_dataset
+    try:
+        from datasets import load_dataset
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "test_mode requires the 'datasets' package, but it is not installed in the current runtime. "
+            "Make sure the Magnus job installs requirements.txt before running train_sft.py."
+        ) from exc
 
     cache_dir = output_dir / "test_mode_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
