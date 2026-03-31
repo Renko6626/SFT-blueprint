@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from src.sft.args import build_parser
 from src.sft.data import load_messages_jsonl
 from src.sft.cli import _merge_args, _resolve_test_mode_args, _save_run_metadata, _validate_args
-from src.sft.formatting import format_messages
+from src.sft.formatting import detect_response_template, format_messages
 
 
 def test_parser_accepts_required_args() -> None:
@@ -144,6 +144,58 @@ def test_format_messages_falls_back_without_chat_template() -> None:
     assert "assistant: world" in text
 
 
+def test_new_optimization_params_have_correct_defaults() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["--output_dir", "outputs/test"])
+    assert args.warmup_ratio == 0.03
+    assert args.weight_decay == 0.01
+    assert args.lr_scheduler_type == "cosine"
+    assert args.packing is False
+
+
+def test_validate_args_rejects_packing_with_response_only(tmp_path: Path) -> None:
+    train_path = tmp_path / "train.jsonl"
+    train_path.write_text(
+        '{"messages":[{"role":"user","content":"q"},{"role":"assistant","content":"a"}]}\n',
+        encoding="utf-8",
+    )
+    parser = build_parser()
+    args = parser.parse_args([
+        "--model_name_or_path", "/models/test",
+        "--train_path", str(train_path),
+        "--output_dir", str(tmp_path),
+        "--packing",
+        "--response_only",
+    ])
+    try:
+        _validate_args(args)
+    except ValueError as exc:
+        assert "packing" in str(exc).lower() and "response_only" in str(exc).lower()
+    else:
+        raise AssertionError("Expected packing + response_only to raise ValueError")
+
+
+def test_detect_response_template_chatml() -> None:
+    class FakeTokenizer:
+        chat_template = "{% if messages[0]['role'] == 'system' %}<|im_start|>system"
+
+    assert detect_response_template(FakeTokenizer()) == "<|im_start|>assistant\n"
+
+
+def test_detect_response_template_llama3() -> None:
+    class FakeTokenizer:
+        chat_template = "{% for message in messages %}<|start_header_id|>{{ message['role'] }}<|end_header_id|>"
+
+    assert detect_response_template(FakeTokenizer()) == "<|start_header_id|>assistant<|end_header_id|>\n\n"
+
+
+def test_detect_response_template_unknown_returns_none() -> None:
+    class FakeTokenizer:
+        chat_template = "some unknown format without known markers"
+
+    assert detect_response_template(FakeTokenizer()) is None
+
+
 def test_resolve_test_mode_args_uses_default_test_model_and_paths(tmp_path: Path, monkeypatch) -> None:
     class FakeDataset:
         def __init__(self, rows: list[dict[str, object]]) -> None:
@@ -160,7 +212,7 @@ def test_resolve_test_mode_args_uses_default_test_model_and_paths(tmp_path: Path
         for i in range(10)
     ]
 
-    def fake_load_dataset(dataset_name: str, split: str) -> FakeDataset:
+    def fake_load_dataset(dataset_name: str, split: str, **kwargs) -> FakeDataset:
         assert dataset_name == "Butanium/femto-ultrachat"
         assert split == "train"
         return FakeDataset(fake_rows)

@@ -1,155 +1,121 @@
 # Blueprint 参数设计说明
 
-本文档用于说明：对于当前这套 SFT 工程，Magnus blueprint 层应该暴露哪些参数，哪些参数应当保留在训练实现内部，不建议直接暴露给使用者。
+本文档说明哪些参数应该在 Magnus blueprint 层暴露给用户，哪些应当留在训练实现内部，以及背后的设计依据。
 
-## 设计目标
+## 设计原则
 
-blueprint 的职责是做一个可复用、可维护的任务提交模板，而不是再做一层训练系统。
+Blueprint 的职责是做一个可复用、可维护的任务提交模板，而不是再造一层训练系统。
 
-因此 blueprint 层应当只暴露：
+因此 blueprint 层只应暴露：
 
-- 用户经常会修改的参数
-- 对实验结果或资源配置影响明显的参数
-- 能够长期稳定作为平台表单契约存在的参数
+- 用户实际需要按实验改动的参数
+- 对结果或资源配置影响显著的参数
+- 能长期稳定作为表单契约存在的参数
 
-而不应当暴露过多训练实现细节，否则 blueprint 会很快失去模板化价值，变成难维护的大表单。
+不应暴露过多训练实现细节，否则 blueprint 会很快失去模板价值，变成难以维护的大表单。
+
+---
 
 ## 建议暴露的参数
 
 ### Basic
 
-- `runner`
-- `experiment_name`
-- `notes`
-
-为什么暴露：
-
-- 这些字段用于标识任务归属和实验上下文
-- 有助于在 Magnus 中做追踪、审计和实验回看
+| 参数 | 理由 |
+|------|------|
+| `runner` | 任务归属和审计追踪必需 |
+| `experiment_name` | 用于任务标识和输出目录构造 |
+| `notes` | 实验上下文记录，不影响训练逻辑 |
 
 ### Data
 
-- `train_path`
-- `val_path`
-- `output_root`
-
-为什么暴露：
-
-- 这是启动任务所必须的数据和输出路径信息
-- `output_root` 比直接暴露完整 `output_dir` 更稳定，因为 blueprint 可以统一按 `experiment_name` 组织输出目录
+| 参数 | 理由 |
+|------|------|
+| `train_path` | 启动训练的必要输入 |
+| `val_path` | 可选，影响评估行为和 best model 加载 |
+| `output_root` | 比直接暴露完整路径更稳定，blueprint 可统一按 experiment_name 组织输出 |
 
 ### Model
 
-- `base_model`
-- `finetune_method`
-- `max_seq_len`
-
-为什么暴露：
-
-- 这些是模型侧最常调整的关键决策
-- `finetune_method` 第一版只建议开放 `lora` 和 `full`，保持表单简单
+| 参数 | 理由 |
+|------|------|
+| `base_model` | 最核心的模型决策，每次实验都可能不同 |
+| `finetune_method` | 决定训练方式（LoRA vs 全参数），影响显存和效果 |
+| `max_seq_len` | 影响截断行为、显存占用和训练吞吐，用户需要明确控制 |
 
 ### Optimization
 
-- `epochs`
-- `learning_rate`
-- `per_device_batch_size`
-- `gradient_accumulation_steps`
-
-为什么暴露：
-
-- 这些是最核心、最高频的优化超参数
-- 直接映射到训练 CLI，语义清晰，便于长期维护
+| 参数 | 理由 |
+|------|------|
+| `epochs` | 最常调整的训练超参数之一 |
+| `learning_rate` | 对训练效果影响最大的参数 |
+| `per_device_batch_size` | 影响显存和有效 batch size |
+| `gradient_accumulation_steps` | 与 batch size 共同决定有效 batch size |
+| `gradient_checkpointing` | 大模型训练的关键显存开关，用户需要明确控制；7B 以上强烈建议暴露 |
+| `save_total_limit` | 直接影响磁盘占用，长时间训练时容易被忽略导致存储爆满 |
 
 ### Cluster
 
-- `gpu_count`
-- `gpu_type`
-- `priority`
-
-为什么暴露：
-
-- 这些参数属于 Magnus 调度层，而不是训练代码内部
-- 提交者必须能够明确控制资源申请
+| 参数 | 理由 |
+|------|------|
+| `gpu_count` | Magnus 调度层参数，提交者必须能控制资源申请 |
+| `gpu_type` | 同上 |
+| `priority` | 同上 |
 
 ### Misc
 
-- `test_mode`
-- `extra_args`
+| 参数 | 理由 |
+|------|------|
+| `test_mode` | 环境验证和 smoke test 的标准入口，接入新仓库时必需 |
+| `extra_args` | 高级用户的逃生口，避免每次加新低频参数都需要改 blueprint |
 
-为什么暴露：
+---
 
-- `test_mode` 适合 Magnus 首次接入、云端环境校验和 smoke test
-- 它作为高级用户的逃生口存在
-- 能在不污染主表单的前提下，保留少量扩展能力
-- 但它应被明确视为“可信用户专用”，因为它本质上是原始命令拼接口
+## 不建议暴露的参数
 
-## 第一版不建议暴露的参数
+以下参数留在训练实现内部，不在第一版 blueprint 中开放：
 
-下面这些参数不建议在第一版 blueprint 中直接开放：
+| 参数 | 理由 |
+|------|------|
+| `dataset_format` | 当前只支持 `messages`，无选择空间，暴露无意义 |
+| `use_lora` | 由 `finetune_method` 间接控制，不需要单独暴露 |
+| `lora_r` / `lora_alpha` / `lora_dropout` | LoRA 内部调参，属于低频高级参数，放 `extra_args` 处理 |
+| `lora_target_modules` | 仅在特定模型架构出现问题时才需要手动指定，放 `extra_args` 处理 |
+| `bf16` / `fp16` | 精度选择通常由集群环境决定，可在 blueprint 内部根据 GPU 类型硬编码，或通过 `extra_args` 传入 |
+| `logging_steps` / `save_steps` / `eval_steps` | 实现细节，在 blueprint 内部固定为合理默认值（10/200/200） |
+| `report_to` | 日志上报后端，通常由基础设施层统一配置，不需要用户每次填写 |
+| `trust_remote_code` | 安全敏感参数，不应作为表单暴露给普通用户 |
+| `load_best_model_at_end` / `metric_for_best_model` | 提供 `val_path` 时自动开启，不需要用户手动控制 |
+| `seed` | 低频参数，需要固定种子时通过 `extra_args` 传入 |
 
-- `dataset_format`
-- `use_lora`
-- `lora_r`
-- `lora_alpha`
-- `lora_dropout`
-- `bf16`
-- `fp16`
-- `logging_steps`
-- `save_steps`
-- `eval_steps`
-- `report_to`
-- `trust_remote_code`
+---
 
-为什么不暴露：
+## 参数边界决策记录
 
-- 它们要么属于实现细节
-- 要么是低频参数
-- 要么一旦放到表单里，就会明显增加使用复杂度和维护成本
+### `gradient_checkpointing` 为何暴露
 
-第一版 blueprint 的重点应该是“稳定可提交”，而不是“把所有训练选项都摊给用户”。
+早期版本将 `gradient_checkpointing` 硬编码为 `False`。实际使用中，7B 及以上模型不开此项容易 OOM，而用户在 blueprint 层没有办法控制。因此将其提升为 blueprint 表单参数，默认关闭，用户可按模型规模自行开启。
 
-## 推荐的默认策略
+### `save_total_limit` 为何暴露
 
-对于当前项目，建议 blueprint 内部默认采用以下策略：
+`save_total_limit` 不设上限时，checkpoint 数量随训练步数线性增长。长时间训练或 `save_steps` 较小时，容易无声地撑爆存储。暴露此参数并设默认值 3，可以明确地让用户意识到存储管理问题。
 
-- 数据格式固定为 `messages`
-- 默认微调方式固定为 `lora`
-- 默认通过 `source conda.sh -> conda activate -> uv sync --quiet -> uv run accelerate launch` 启动
-- 所有进入 shell 命令的自由字符串都必须做安全引用
-- `REPO_NAME`、`NAMESPACE`、`WORKDIR`、`CONDA_SH`、`CONDA_ENV` 作为模板常量，由维护者在实际接入时替换成真实值
+### `load_best_model_at_end` 为何不暴露
 
-这些策略的目的是：
+提供 `val_path` 时自动开启，行为确定、无歧义，不需要额外的表单字段。用户只需要知道"提供验证集就能得到最优 checkpoint"即可。
 
-- 降低表单复杂度
-- 提高模板复用性
-- 减少用户误操作
+### `lora_target_modules` 为何不暴露
 
-## Blueprint 层与训练实现的边界
+绝大多数主流模型（Qwen、LLaMA、Mistral 等）都能被 PEFT 正确自动推断 target modules。只有极少数自定义架构才需要手动指定，属于低频边缘情况，通过 `extra_args` 传入足够。
 
-blueprint 只负责：
+---
 
-1. 定义用户可填写的参数
-2. 把这些参数拼接成 `entry_command`
-3. 调用 Magnus 的 `submit_job()`
+## 文件映射关系
 
-训练实现负责：
-
-- 参数解析
-- 数据读取
-- 数据格式转换
-- tokenizer / model / LoRA 构造
-- trainer 创建
-- train / eval / save
-
-也就是说：
-
-- 如果某个能力只是训练实现细节，不应当直接暴露到 blueprint
-- 如果某个能力已经成为稳定、高频、平台级的使用需求，才值得上升为 blueprint 参数
-
-## 当前文件映射关系
-
-- 训练入口：`train_sft.py`
-- blueprint 模板：`blueprints/sft_blueprint_template.py`
-- blueprint 使用说明：`docs/blueprint_usage_guide.md`
-- blueprint 参数设计说明：`docs/blueprint_parameter_design.md`
+| 文件 | 职责 |
+|------|------|
+| `train_sft.py` | 训练入口，委托给 `src/sft/cli.py` |
+| `src/sft/` | 全部训练实现逻辑 |
+| `blueprints/sft_blueprint_template.py` | Magnus 蓝图模板 |
+| `configs/sft/base.yaml` | 训练超参默认值 |
+| `docs/blueprint_usage_guide.md` | 面向用户的使用说明 |
+| `docs/blueprint_parameter_design.md` | 面向维护者的设计决策记录（本文档） |

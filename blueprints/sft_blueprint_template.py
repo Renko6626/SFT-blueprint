@@ -4,6 +4,12 @@ WORKDIR = "/magnus/workspace/repository"
 CONDA_SH = "/opt/miniconda3/etc/profile.d/conda.sh"
 CONDA_ENV = "magnus_shared"
 
+ACCELERATE_CONFIGS = {
+    "ddp":   None,
+    "zero2": "configs/accelerate/deepspeed_zero2.yaml",
+    "zero3": "configs/accelerate/deepspeed_zero3.yaml",
+}
+
 
 Runner = Annotated[str, {
     "label": "Runner",
@@ -104,6 +110,75 @@ GradAccumSteps = Annotated[int, {
     "max": 4096,
 }]
 
+WarmupRatio = Annotated[float, {
+    "label": "Warmup Ratio",
+    "description": "Fraction of total training steps used for LR warmup. Prevents loss spikes at the start of training.",
+    "scope": "Optimization",
+    "min": 0.0,
+    "max": 0.5,
+}]
+
+WeightDecay = Annotated[float, {
+    "label": "Weight Decay",
+    "description": "AdamW weight decay coefficient.",
+    "scope": "Optimization",
+    "min": 0.0,
+    "max": 0.1,
+}]
+
+LrSchedulerType = Annotated[Literal["cosine", "linear"], {
+    "label": "LR Scheduler",
+    "description": "Learning rate decay schedule.",
+    "scope": "Optimization",
+    "options": {
+        "cosine": {"label": "Cosine", "description": "Smooth cosine decay. Recommended for most SFT runs."},
+        "linear": {"label": "Linear", "description": "Linear decay to zero."},
+    },
+}]
+
+Packing = Annotated[bool, {
+    "label": "Sequence Packing",
+    "description": "Pack multiple short sequences into one max_seq_length sequence to maximize GPU utilization. Incompatible with Response-Only Loss.",
+    "scope": "Optimization",
+}]
+
+GradientCheckpointing = Annotated[bool, {
+    "label": "Gradient Checkpointing",
+    "description": "Enable gradient checkpointing to reduce GPU memory usage at the cost of slower training.",
+    "scope": "Optimization",
+}]
+
+SaveTotalLimit = Annotated[int, {
+    "label": "Save Total Limit",
+    "description": "Maximum number of checkpoints to keep on disk.",
+    "scope": "Optimization",
+    "min": 1,
+    "max": 20,
+}]
+
+ResponseOnly = Annotated[bool, {
+    "label": "Response-Only Loss",
+    "description": "Only compute loss on assistant responses, masking system/user prompt tokens. Recommended for instruction fine-tuning.",
+    "scope": "Model",
+}]
+
+FlashAttention = Annotated[bool, {
+    "label": "Flash Attention 2",
+    "description": "Use Flash Attention 2 for faster attention computation. Requires flash-attn package. Recommended for A100+.",
+    "scope": "Model",
+}]
+
+AcceleratePreset = Annotated[Literal["ddp", "zero2", "zero3"], {
+    "label": "Distributed Strategy",
+    "description": "Distributed training strategy for multi-GPU jobs.",
+    "scope": "Cluster",
+    "options": {
+        "ddp":   {"label": "DDP",    "description": "Data parallel, no sharding. Simplest but highest per-GPU memory."},
+        "zero2": {"label": "ZeRO-2", "description": "Shards optimizer states across GPUs. Recommended for full fine-tuning."},
+        "zero3": {"label": "ZeRO-3", "description": "Shards weights + gradients + optimizer states. Maximum memory efficiency."},
+    },
+}]
+
 GpuCount = Annotated[int, {
     "label": "GPU Count",
     "description": "Number of GPUs requested for this job.",
@@ -165,11 +240,20 @@ def blueprint(
     val_path: ValPath = None,
     base_model: BaseModel = "Qwen/Qwen2.5-0.5B-Instruct",
     finetune_method: FinetuneMethod = "lora",
+    response_only: ResponseOnly = True,
+    flash_attention: FlashAttention = True,
     max_seq_len: MaxSeqLen = 4096,
     epochs: Epochs = 3,
     learning_rate: LearningRate = 2e-5,
+    warmup_ratio: WarmupRatio = 0.03,
+    weight_decay: WeightDecay = 0.01,
+    lr_scheduler_type: LrSchedulerType = "cosine",
     per_device_batch_size: PerDeviceBatchSize = 1,
     gradient_accumulation_steps: GradAccumSteps = 16,
+    packing: Packing = False,
+    gradient_checkpointing: GradientCheckpointing = False,
+    save_total_limit: SaveTotalLimit = 3,
+    accelerate_preset: AcceleratePreset = "ddp",
     gpu_count: GpuCount = 1,
     gpu_type: GpuType = "rtx5090",
     priority: Priority = "A2",
@@ -182,9 +266,14 @@ def blueprint(
 
     output_dir = f"{output_root.rstrip('/')}/{experiment_name}"
 
+    accel_config = ACCELERATE_CONFIGS[accelerate_preset]
+    launch_prefix = "uv run accelerate launch"
+    if accel_config:
+        launch_prefix += f" --config_file {shq(accel_config)}"
+    launch_prefix += f" --num_processes {gpu_count}"
+
     train_cmd = (
-        "uv run accelerate launch"
-        + f" --num_processes {gpu_count}"
+        launch_prefix
         + " train_sft.py"
         + f" --experiment_name {shq(experiment_name)}"
         + f" --output_dir {shq(output_dir)}"
@@ -194,11 +283,24 @@ def blueprint(
         + f" --per_device_eval_batch_size {per_device_batch_size}"
         + f" --gradient_accumulation_steps {gradient_accumulation_steps}"
         + f" --learning_rate {learning_rate}"
+        + f" --warmup_ratio {warmup_ratio}"
+        + f" --weight_decay {weight_decay}"
+        + f" --lr_scheduler_type {lr_scheduler_type}"
         + f" --num_train_epochs {epochs}"
+        + f" --save_total_limit {save_total_limit}"
         + " --logging_steps 10"
         + " --save_steps 200"
         + " --eval_steps 200"
     )
+
+    if packing:
+        train_cmd += " --packing"
+    if gradient_checkpointing:
+        train_cmd += " --gradient_checkpointing"
+    if response_only:
+        train_cmd += " --response_only"
+    if flash_attention:
+        train_cmd += " --flash_attention"
 
     if test_mode:
         train_cmd += " --test_mode"
@@ -236,8 +338,17 @@ def blueprint(
 - Max Seq Len: {max_seq_len}
 - Epochs: {epochs}
 - Learning Rate: {learning_rate}
+- Warmup Ratio: {warmup_ratio}
+- Weight Decay: {weight_decay}
+- LR Scheduler: {lr_scheduler_type}
 - Batch Size / Device: {per_device_batch_size}
 - Grad Accumulation: {gradient_accumulation_steps}
+- Packing: {packing}
+- Gradient Checkpointing: {gradient_checkpointing}
+- Save Total Limit: {save_total_limit}
+- Response-Only Loss: {response_only}
+- Flash Attention 2: {flash_attention}
+- Distributed Strategy: {accelerate_preset}
 - GPU: {gpu_count} x {gpu_type}
 - Priority: {priority}
 """

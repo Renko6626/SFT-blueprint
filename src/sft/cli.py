@@ -9,7 +9,8 @@ import yaml
 from src.sft.args import build_parser
 from src.sft.data import load_datasets, prepare_test_mode_data
 from src.sft.eval import evaluate_if_available
-from src.sft.formatting import format_messages
+from src.sft.formatting import detect_response_template, format_messages
+from src.sft.callbacks import GpuMemoryCallback
 from src.sft.model import build_peft_config, load_model_and_tokenizer
 from src.sft.trainer import build_trainer
 from src.sft.utils import LOGGER, configure_logging, dump_json, ensure_dir, set_seed, to_serializable
@@ -42,6 +43,11 @@ def _merge_args(cli_args: Any, config: dict[str, Any]) -> Any:
 def _validate_args(args: Any) -> None:
     if args.bf16 and args.fp16:
         raise ValueError("Choose at most one mixed precision mode: bf16 or fp16.")
+    if args.packing and args.response_only:
+        raise ValueError(
+            "--packing and --response_only cannot be used together: "
+            "sequence packing breaks the token-level loss mask applied by DataCollatorForCompletionOnlyLM."
+        )
     if args.model_name_or_path is None:
         raise ValueError("model_name_or_path is required unless test_mode provides a default model.")
     if args.train_path is None:
@@ -94,6 +100,29 @@ def _save_run_metadata(args: Any, train_records: list[dict[str, Any]], val_recor
     dump_json(args.output_dir / "run_summary.json", summary)
 
 
+def _build_data_collator(args: Any, tokenizer: Any) -> Any | None:
+    if not args.response_only:
+        return None
+    from trl import DataCollatorForCompletionOnlyLM
+
+    template = args.response_template or detect_response_template(tokenizer)
+    if template is None:
+        raise ValueError(
+            "--response_only is enabled but the response template could not be auto-detected "
+            "from the tokenizer's chat_template. Pass --response_template explicitly, "
+            "e.g. --response_template '<|im_start|>assistant\\n'."
+        )
+    if tokenizer.padding_side != "right":
+        LOGGER.warning(
+            "DataCollatorForCompletionOnlyLM requires right-padding; "
+            "overriding tokenizer.padding_side from %r to 'right'.",
+            tokenizer.padding_side,
+        )
+        tokenizer.padding_side = "right"
+    LOGGER.info("Response-only loss masking enabled with template: %r", template)
+    return DataCollatorForCompletionOnlyLM(response_template=template, tokenizer=tokenizer)
+
+
 def _to_hf_dataset(records: list[dict[str, Any]], tokenizer: Any) -> Any:
     from datasets import Dataset
 
@@ -112,7 +141,9 @@ def main() -> int:
     set_seed(args.seed)
     LOGGER.info("Loading datasets from %s", args.train_path)
     train_records, val_records = load_datasets(args.train_path, args.val_path)
-    _save_run_metadata(args, train_records, val_records)
+    from accelerate import PartialState
+    if PartialState().is_main_process:
+        _save_run_metadata(args, train_records, val_records)
     if args.dry_run:
         LOGGER.info("Dry run finished successfully. Configuration and datasets are valid.")
         return 0
@@ -122,6 +153,8 @@ def main() -> int:
     train_dataset = _to_hf_dataset(train_records, tokenizer)
     eval_dataset = _to_hf_dataset(val_records, tokenizer) if val_records else None
     peft_config = build_peft_config(args)
+    data_collator = _build_data_collator(args, tokenizer)
+    callbacks = [GpuMemoryCallback()] if args.log_gpu_memory else None
     trainer = build_trainer(
         args=args,
         model=model,
@@ -130,6 +163,8 @@ def main() -> int:
         eval_dataset=eval_dataset,
         peft_config=peft_config,
         formatting_func=None,
+        data_collator=data_collator,
+        callbacks=callbacks,
     )
 
     LOGGER.info("Starting training")
@@ -139,7 +174,8 @@ def main() -> int:
 
     trainer.save_model(str(args.output_dir))
     tokenizer.save_pretrained(str(args.output_dir))
-    dump_json(args.output_dir / "train_metrics.json", train_metrics)
-    dump_json(args.output_dir / "eval_metrics.json", eval_metrics)
+    if trainer.is_world_process_zero():
+        dump_json(args.output_dir / "train_metrics.json", train_metrics)
+        dump_json(args.output_dir / "eval_metrics.json", eval_metrics)
     LOGGER.info("Training complete. Outputs saved to %s", args.output_dir)
     return 0
